@@ -1,0 +1,78 @@
+{
+  "_comment": "Non-secret test data for the designed OpenEMR portal suite, taken from requirements/openemr-patient-portal-prd.md sections 26-27 (observed on the demo 2026-09-15). Credentials are NOT here: scripts/test_data.py provision adds patient1_*/patient2_* from repository secrets. Names are a first guess, provisioned before design so kane-cli reuses them instead of inventing new ones; reconcile against the first real design run's *_test.md files and the stubs it reports.",
+  "portal_login_url": {
+    "value": "https://demo.openemr.io/openemr/portal"
+  },
+  "invalid_password": {
+    "value": "not-the-right-password"
+  },
+  "invalid_login_error": {
+    "value": "Something went wrong. Please try again."
+  },
+  "missing_fields_error": {
+    "value": "Field(s) are missing!"
+  },
+  "patient1_full_name": {
+    "value": "Phil Belford"
+  },
+  "patient1_dob": {
+    "value": "1972-02-09"
+  },
+  "patient1_provider": {
+    "value": "Billy Smith"
+  },
+  "patient1_medications": {
+    "value": "Norvasc, Lisinopril"
+  },
+  "patient1_allergies": {
+    "value": "penicillin, iodine"
+  },
+  "patient1_problems": {
+    "value": "HTN, Chronic Renal Insuficiency"
+  },
+  "patient1_primary_insurance": {
+    "value": "Aekna"
+  },
+  "patient2_full_name": {
+    "value": "Susan Ardmore Underwood"
+  },
+  "patient2_dob": {
+    "value": "1967-02-08"
+  },
+  "patient2_provider": {
+    "value": "Donna Lee"
+  },
+  "patient2_medications": {
+    "value": "Metformin, Lipitor, Lisinopril"
+  },
+  "patient2_problems": {
+    "value": "diabetes"
+  },
+  "appointment_provider": {
+    "value": "Smith, Billy"
+  },
+  "appointment_visit_type": {
+    "value": "Office Visit"
+  },
+  "appointment_reason": {
+    "value": "Automated assurance check - please ignore"
+  },
+  "message_subject": {
+    "value": "General"
+  },
+  "message_body": {
+    "value": "Automated assurance check - please ignore."
+  },
+  "clinical_form_name": {
+    "value": "Medical History"
+  },
+  "billing_from_date": {
+    "value": "2018-01-01"
+  },
+  "billing_to_date": {
+    "value": "2026-12-31"
+  },
+  "portal_theme": {
+    "value": "Dark"
+  }
+}

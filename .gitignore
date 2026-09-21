@@ -1,0 +1,19 @@
+node_modules/
+.testmuai/evidence/
+.testmuai/sessions/
+.testmuai/variables/
+.testmuai/rook/
+coverage.json
+coverage.txt
+evidence-validation.json
+testrun.ndjson
+members.txt
+usecases.txt
+.kane-state/
+__pycache__/
+*.pyc
+
+# Local artifacts / OS files
+.DS_Store
+Thumbs.db
+*.zip

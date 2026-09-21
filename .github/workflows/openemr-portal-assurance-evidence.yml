@@ -1,0 +1,427 @@
+name: OpenEMR Patient Portal · Assurance & Evidence
+
+# Requirements -> designed tests -> executed proof -> coverage gate.
+# Every stage is kane-cli; nothing is hand-authored.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'requirements/**'
+      - '.testmuai/tests/**'
+      - 'test-data/**'
+      - 'scripts/**'
+      - '.github/workflows/openemr-portal-assurance-evidence.yml'
+  pull_request:
+    paths:
+      - 'requirements/**'
+      - '.testmuai/tests/**'
+      - 'test-data/**'
+      - 'scripts/**'
+  schedule:
+    # The public demo resets at ~08:00 UTC daily; run after it has settled.
+    - cron: '30 9 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      max_pairs:
+        description: Max scenario+test pairs designed per use-case
+        default: '8'
+      coverage_threshold:
+        description: Minimum proven coverage %% before the build fails
+        default: '80'
+      force_design:
+        description: Redesign use-cases that already have a live design
+        type: boolean
+        default: false
+
+# One run at a time across the whole repo, not per ref: every run signs in to the same
+# two shared demo accounts, and a second login ends the first session (PRD BR-005).
+concurrency:
+  group: openemr-portal-assurance
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  APP_URL: https://demo.openemr.io/openemr/portal
+  KANE_CLI_USER_AGENT: github-actions
+  MAX_PAIRS: ${{ inputs.max_pairs || '8' }}
+  COVERAGE_THRESHOLD: ${{ inputs.coverage_threshold || '80' }}
+
+jobs:
+  # ===========================================================================
+  # 1 — ASSURANCE. The PRD is the input; a context graph and a set of designed
+  #     *_test.md files are the output.
+  # ===========================================================================
+  assurance:
+    name: 1 · Assurance — requirements to designed tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      usecase_count: ${{ steps.design.outputs.usecase_count }}
+      test_count: ${{ steps.design.outputs.test_count }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-kane
+        with:
+          username: ${{ secrets.LT_USERNAME }}
+          access-key: ${{ secrets.LT_ACCESS_KEY }}
+          project-id: ${{ secrets.TESTMUAI_PROJECT_ID }}
+          folder-id: ${{ secrets.TESTMUAI_FOLDER_ID }}
+
+      # The graph is an append-only commit chain. Reusing it across runs means
+      # unchanged requirements are not re-extracted and not re-billed.
+      # .kane-state holds the designed *_test.md files (see scripts/assurance.sh):
+      # kane-cli cannot rebuild them from the graph, so they travel with it.
+      - name: Restore context graph
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .context
+            .kane-state
+          key: kane-assurance-v1-${{ hashFiles('requirements/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            kane-assurance-v1-${{ hashFiles('requirements/**') }}-
+            kane-assurance-v1-
+
+      - name: Point kane-cli at the portal
+        run: kane-cli config set-url "$APP_URL"
+
+      # Provisioned before design, not just before execution: kane-cli design reuses a
+      # variable name that already exists in a pool file instead of inventing one, so the
+      # designed tests come back using patient1_username etc. Design reads names only,
+      # never values, and .testmuai/variables/ is never uploaded or cached.
+      - name: Provision test data
+        env:
+          OPENEMR_PORTAL_USER: ${{ secrets.OPENEMR_PORTAL_USER }}
+          OPENEMR_PORTAL_PASSWORD: ${{ secrets.OPENEMR_PORTAL_PASSWORD }}
+          OPENEMR_PORTAL_EMAIL: ${{ secrets.OPENEMR_PORTAL_EMAIL }}
+          OPENEMR_PORTAL_USER_2: ${{ secrets.OPENEMR_PORTAL_USER_2 }}
+          OPENEMR_PORTAL_PASSWORD_2: ${{ secrets.OPENEMR_PORTAL_PASSWORD_2 }}
+          OPENEMR_PORTAL_EMAIL_2: ${{ secrets.OPENEMR_PORTAL_EMAIL_2 }}
+        run: python3 scripts/test_data.py provision
+
+      - name: Ingest, extract, review, design
+        id: design
+        env:
+          REQ_GLOB: requirements/*.md
+          MAX_PAIRS: ${{ env.MAX_PAIRS }}
+          AUTO_APPROVE: 'true'
+          FORCE_DESIGN: ${{ inputs.force_design || 'false' }}
+        run: bash scripts/assurance.sh
+
+      - name: Save context graph
+        if: ${{ !cancelled() && (steps.design.outcome == 'success' || steps.design.outcome == 'failure') }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .context
+            .kane-state
+          key: kane-assurance-v1-${{ hashFiles('requirements/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Assurance summary
+        if: always()
+        run: |
+          {
+            echo "## 1 · Assurance"
+            echo
+            echo "Source of truth: \`requirements/openemr-patient-portal-prd.md\`"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Live use-cases | ${{ steps.design.outputs.usecase_count || 0 }} |"
+            echo "| Designed tests | ${{ steps.design.outputs.test_count || 0 }} |"
+            echo
+            echo '<details><summary>Context graph nodes</summary>'
+            echo
+            echo '```'
+            kane-cli context list || true
+            echo '```'
+            echo
+            echo '</details>'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the graph and the designed tests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assurance-graph-${{ github.run_number }}
+          path: |
+            .context/
+            .testmuai/tests/
+            usecases.txt
+          include-hidden-files: true
+          retention-days: 30
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # 2 — EVIDENCE. Run every designed test as ONE execution so the whole suite
+  #     seals into a single evidence pack.
+  # ===========================================================================
+  evidence:
+    name: 2 · Evidence — execute and seal the pack
+    needs: assurance
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    outputs:
+      pack: ${{ steps.pack.outputs.path }}
+      status: ${{ steps.execute.outputs.status }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-kane
+        with:
+          username: ${{ secrets.LT_USERNAME }}
+          access-key: ${{ secrets.LT_ACCESS_KEY }}
+          project-id: ${{ secrets.TESTMUAI_PROJECT_ID }}
+          folder-id: ${{ secrets.TESTMUAI_FOLDER_ID }}
+
+      - name: Fetch the designed tests
+        uses: actions/download-artifact@v4
+        with:
+          name: assurance-graph-${{ github.run_number }}
+
+      - name: Restore recorded steps
+        uses: actions/cache/restore@v4
+        with:
+          path: .testmuai/tests/output-*
+          key: kane-recordings-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: kane-recordings-
+
+      # Nothing to start: the site under test is the public demo. Fail fast, before any
+      # browser minute is spent, if it is down or mid-reset.
+      - name: Check the demo portal is reachable
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 10); do
+            if curl -sfL -o /dev/null "$APP_URL/index.php"; then
+              echo "OpenEMR demo portal is up."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error title=Demo unreachable::$APP_URL did not respond. The public demo may be resetting (~08:00 UTC) or down."
+          exit 1
+
+      - name: Provision test data
+        env:
+          OPENEMR_PORTAL_USER: ${{ secrets.OPENEMR_PORTAL_USER }}
+          OPENEMR_PORTAL_PASSWORD: ${{ secrets.OPENEMR_PORTAL_PASSWORD }}
+          OPENEMR_PORTAL_EMAIL: ${{ secrets.OPENEMR_PORTAL_EMAIL }}
+          OPENEMR_PORTAL_USER_2: ${{ secrets.OPENEMR_PORTAL_USER_2 }}
+          OPENEMR_PORTAL_PASSWORD_2: ${{ secrets.OPENEMR_PORTAL_PASSWORD_2 }}
+          OPENEMR_PORTAL_EMAIL_2: ${{ secrets.OPENEMR_PORTAL_EMAIL_2 }}
+        run: python3 scripts/test_data.py provision
+
+      - name: Collect members
+        id: members
+        run: |
+          set -euo pipefail
+          find .testmuai/tests -name '*_test.md' | sort > members.txt
+          echo "count=$(wc -l < members.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+          cat members.txt
+
+      - name: Preflight
+        run: |
+          set -euo pipefail
+          python3 scripts/test_data.py check members.txt
+          mapfile -t TESTS < members.txt
+          kane-cli testrun run "${TESTS[@]}" --dry-run \
+            --name "OpenEMR portal preflight #${{ github.run_number }}"
+
+      # --parallel 1 on purpose: every test signs in as one of two shared demo patients,
+      # and a second login with the same account ends the first session (PRD BR-005),
+      # so two workers would log each other out mid-test.
+      - name: Execute the portal suite
+        id: execute
+        run: |
+          set -uo pipefail
+          set +e
+          mapfile -t TESTS < members.txt
+          kane-cli testrun run "${TESTS[@]}" \
+            --name "OpenEMR portal regression #${{ github.run_number }} (${GITHUB_SHA:0:7})" \
+            --parallel 1 \
+            --on-failure continue \
+            --headless \
+            | tee testrun.ndjson
+          CODE=${PIPESTATUS[0]}
+          echo "status=$CODE" >> "$GITHUB_OUTPUT"
+          if [ "$CODE" -eq 2 ]; then exit 2; fi
+          exit 0
+
+      # testrun publishes the whole batch's evidence pack to the TMS dashboard via a
+      # testrun_evidence_ingest event; absent means publish was skipped.
+      - name: Report the dashboard link
+        if: always() && steps.execute.outcome != 'skipped'
+        env:
+          TESTMUAI_PROJECT_ID: ${{ secrets.TESTMUAI_PROJECT_ID }}
+        run: |
+          {
+            echo "## Dashboard"
+            echo
+            if grep -q '"type":"testrun_evidence_ingest"' testrun.ndjson 2>/dev/null; then
+              echo "Evidence pack published — view every test's screenshots and steps directly:"
+              echo
+              echo "[Open in Test Manager](https://test-manager.lambdatest.com/projects/${TESTMUAI_PROJECT_ID})"
+            else
+              echo "⚠️ This run's evidence pack did not publish to the dashboard (no"
+              echo "\`testrun_evidence_ingest\` event) — it's local-only this time. Download"
+              echo "the \`openemr-evidence-*\` artifact and run \`kane-cli evidence serve\`"
+              echo "to view it, or check \`kane-cli whoami\` / project-folder config."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save recorded steps
+        if: always() && steps.execute.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: .testmuai/tests/output-*
+          key: kane-recordings-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Publish the executed graph
+        if: always() && steps.execute.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: assurance-graph-executed-${{ github.run_number }}
+          path: .context/
+          include-hidden-files: true
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Locate the sealed pack
+        id: pack
+        run: |
+          set -euo pipefail
+          PACK=$( { find .testmuai/evidence -name '*.evidence' -printf '%T@ %p\n' 2>/dev/null || true; } \
+                 | sort -rn | head -1 | cut -d' ' -f2-)
+          if [ -z "$PACK" ]; then
+            echo "::error title=No evidence pack::testrun produced no sealed pack."
+            exit 1
+          fi
+          echo "path=$PACK" >> "$GITHUB_OUTPUT"
+          ls -lh "$PACK"
+
+      - name: Validate the pack
+        run: |
+          set -euo pipefail
+          kane-cli evidence validate "${{ steps.pack.outputs.path }}" \
+            --profile L1 --json | tee evidence-validation.json
+          {
+            echo "## 2 · Evidence"
+            echo
+            echo "Pack: \`$(basename "${{ steps.pack.outputs.path }}")\`  ·  L1 validated"
+            echo
+            echo "View it locally with:"
+            echo
+            echo '```bash'
+            echo "kane-cli evidence serve $(basename "${{ steps.pack.outputs.path }}")"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the evidence pack
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openemr-evidence-${{ github.run_number }}
+          path: |
+            .testmuai/evidence/*.evidence
+            evidence-validation.json
+            testrun.ndjson
+          retention-days: 90
+          if-no-files-found: warn
+
+  # ===========================================================================
+  # 3 — COVERAGE. Two axes: completeness owed by the graph, depth proven by the
+  #     pack. This is the stage that turns "tests passed" into "requirements met".
+  # ===========================================================================
+  coverage:
+    name: 3 · Coverage — designed vs proven
+    needs: [assurance, evidence]
+    if: always() && needs.evidence.outputs.pack != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-kane
+        with:
+          username: ${{ secrets.LT_USERNAME }}
+          access-key: ${{ secrets.LT_ACCESS_KEY }}
+          project-id: ${{ secrets.TESTMUAI_PROJECT_ID }}
+          folder-id: ${{ secrets.TESTMUAI_FOLDER_ID }}
+
+      - name: Fetch the executed graph
+        uses: actions/download-artifact@v4
+        with:
+          name: assurance-graph-executed-${{ github.run_number }}
+          path: .context
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: openemr-evidence-${{ github.run_number }}
+          path: .testmuai/evidence
+
+      - name: Compute the coverage ribbon
+        run: |
+          set -euo pipefail
+          PACK=$(find .testmuai/evidence -name '*.evidence' | head -1)
+          echo "PACK=$PACK" >> "$GITHUB_ENV"
+          kane-cli cover --from "$PACK" gaps --rollup strict            > coverage.txt || true
+          kane-cli cover --from "$PACK" gaps --rollup strict --json     > coverage.json || true
+          cat coverage.txt
+
+      - name: Gate on proven coverage
+        id: gate
+        run: |
+          python3 scripts/coverage_gate.py \
+            --json coverage.json \
+            --table coverage.txt \
+            --pack "$PACK" \
+            --threshold "$COVERAGE_THRESHOLD"
+
+      - name: Comment the ribbon on the PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const ribbon = fs.existsSync('coverage.txt')
+              ? fs.readFileSync('coverage.txt', 'utf8').trim()
+              : '(no ribbon produced)';
+            const gate = '${{ steps.gate.outcome }}' === 'success' ? '🟢 passed' : '🔴 below gate';
+            const body = [
+              '### OpenEMR patient portal assurance — designed × proven',
+              '',
+              `Coverage gate: ${gate} (threshold ${process.env.COVERAGE_THRESHOLD}%)`,
+              `Use-cases: ${{ needs.assurance.outputs.usecase_count || 0 }} · Designed tests: ${{ needs.assurance.outputs.test_count || 0 }}`,
+              '',
+              '<details><summary>Coverage ribbon</summary>',
+              '',
+              '```',
+              ribbon,
+              '```',
+              '',
+              '</details>',
+              '',
+              `Evidence pack is attached to [run #${{ github.run_number }}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}).`,
+            ].join('\n');
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+
+      - name: Publish the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openemr-coverage-${{ github.run_number }}
+          path: |
+            coverage.txt
+            coverage.json
+          retention-days: 30
+          if-no-files-found: warn
