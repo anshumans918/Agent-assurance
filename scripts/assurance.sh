@@ -23,6 +23,9 @@ REQ_GLOB="${REQ_GLOB:-requirements/*.md}"
 MAX_PAIRS="${MAX_PAIRS:-12}"
 AUTO_APPROVE="${AUTO_APPROVE:-true}"
 FORCE_DESIGN="${FORCE_DESIGN:-false}"
+# Space- or comma-separated use-case ids to redesign even when they already have a
+# design, e.g. "uc-3" — a targeted alternative to FORCE_DESIGN, which redesigns all.
+FORCE_USECASES="${FORCE_USECASES:-}"
 
 step() { printf '\n\033[1m▸ %s\033[0m\n' "$1"; }
 
@@ -59,7 +62,7 @@ run_assurance() {
       fi
       ;;
     *)
-      echo "::error title=Assurance failed::${label} exited ${code}."
+      echo "::${FAIL_LEVEL:-error} title=Assurance failed::${label} exited ${code}."
       ;;
   esac
   return "$code"
@@ -82,6 +85,12 @@ design_gate_refused() {
 # in STATE_DIR — cached together with .context/ — and put back while their test is
 # still live in the graph.
 STATE_DIR=".kane-state/tests"
+
+# Use-cases whose design failed, kept with the graph. A failed design can still leave
+# draft ACs and scenarios behind, which `cover gaps` then rates "partial" — and a
+# partial use-case is skipped. Without this list a failed use-case would never be
+# designed again; with it, the next run redesigns it with --force.
+FAILED_STATE=".kane-state/design-failed.txt"
 
 # Live test ids in the graph, one per line.
 graph_test_ids() {
@@ -207,10 +216,40 @@ if [ "$FORCE_DESIGN" != "true" ]; then
   fi
 fi
 
+declare -A FORCED=()
+for uc in ${FORCE_USECASES//,/ }; do FORCED["$uc"]="requested"; done
+if [ -f "$FAILED_STATE" ]; then
+  while read -r uc; do
+    if [ -n "$uc" ] && [ -z "${FORCED[$uc]:-}" ]; then FORCED["$uc"]="failed on an earlier run"; fi
+  done < "$FAILED_STATE"
+fi
+
+# One design attempt; returns kane-cli's exit code, or 100 when the design gate
+# refused because the use-case is already designed.
+design_once() {
+  local uc="$1"; shift
+  local code=0
+  RUN_LOG=$(mktemp)
+  run_assurance "design tests (${uc})" \
+    kane-cli design tests --use-case "$uc" "$@" || code=$?
+  if [ "$code" -eq 2 ] && design_gate_refused "$RUN_LOG"; then
+    if grep -q '(STALE)' "$RUN_LOG"; then
+      echo "::notice title=Stale design (${uc})::The use-case changed after it was designed. Refresh it locally with 'kane-cli maintain evolve ${uc}', then commit .context/."
+    fi
+    code=100
+  fi
+  rm -f "$RUN_LOG"; RUN_LOG=""
+  return "$code"
+}
+
 SKIPPED=(); PAUSED=(); FAILED=()
 for uc in "${USECASES[@]}"; do
   status="${DESIGN_STATUS[$uc]:-}"
-  if [ "$status" = "partial" ] || [ "$status" = "complete" ]; then
+  ARGS=("${DESIGN_ARGS[@]}")
+  if [ -n "${FORCED[$uc]:-}" ]; then
+    echo "Redesigning ${uc} with --force (${FORCED[$uc]})."
+    [ "$FORCE_DESIGN" = "true" ] || ARGS+=(--force)
+  elif [ "$status" = "partial" ] || [ "$status" = "complete" ]; then
     echo "Skipping ${uc}: it already has a ${status} design (run with force_design to redesign)."
     stale="${STALE_ACS[$uc]:-0}"
     if [[ "$stale" =~ ^[0-9]+$ ]] && [ "$stale" -gt 0 ]; then
@@ -221,19 +260,22 @@ for uc in "${USECASES[@]}"; do
   fi
   step "    designing ${uc}"
   code=0
-  RUN_LOG=$(mktemp)
-  run_assurance "design tests (${uc})" \
-    kane-cli design tests --use-case "$uc" "${DESIGN_ARGS[@]}" || code=$?
-  if [ "$code" -eq 2 ] && design_gate_refused "$RUN_LOG"; then
+  FAIL_LEVEL=warning design_once "$uc" "${ARGS[@]}" || code=$?
+  # A ci-mode session that fails to save closes for good ("re-run to retry"); run 1
+  # lost uc-3 to one undeclared variable. Retry once, with --force because the failed
+  # attempt may already have saved draft ACs/scenarios the gate would refuse over.
+  if [ "$code" -ne 0 ] && [ "$code" -ne 2 ] && [ "$code" -ne 3 ] && [ "$code" -ne 100 ]; then
+    echo "Retrying ${uc} once with --force after exit ${code}."
+    RETRY_ARGS=("${ARGS[@]}")
+    [[ " ${ARGS[*]} " == *" --force "* ]] || RETRY_ARGS+=(--force)
+    code=0
+    design_once "$uc" "${RETRY_ARGS[@]}" || code=$?
+  fi
+  if [ "$code" -eq 100 ]; then
     echo "Skipping ${uc}: kane-cli reports it is already designed (run with force_design to redesign)."
-    if grep -q '(STALE)' "$RUN_LOG"; then
-      echo "::notice title=Stale design (${uc})::The use-case changed after it was designed. Refresh it locally with 'kane-cli maintain evolve ${uc}', then commit .context/."
-    fi
     SKIPPED+=("$uc")
-    rm -f "$RUN_LOG"; RUN_LOG=""
     continue
   fi
-  rm -f "$RUN_LOG"; RUN_LOG=""
   case "$code" in
     0) ;;
     3) PAUSED+=("$uc") ;;
@@ -260,6 +302,8 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
 fi
 
 stash_designed_tests
+mkdir -p "$(dirname "$FAILED_STATE")"
+printf '%s\n' "${FAILED[@]}" | sed '/^$/d' > "$FAILED_STATE"
 
 # kane-cli 0.8.12+ reuses a variable name that already exists in a pool file and
 # declares an empty stub in .testmuai/variables/assurance.json for each one it
@@ -277,6 +321,7 @@ if [ -n "${GITHUB_OUTPUT:-}" ]; then
   {
     echo "usecase_count=${#USECASES[@]}"
     echo "test_count=${TEST_COUNT}"
+    echo "failed_usecases=${FAILED[*]}"
   } >> "$GITHUB_OUTPUT"
 fi
 
@@ -285,9 +330,9 @@ if [ "$TEST_COUNT" -eq 0 ]; then
   exit 1
 fi
 
-# Every use-case has had its turn and the outputs above are written; a design
-# failure still fails the stage, as it always has.
+# A failed use-case does not block the tests that were designed: the evidence stage
+# runs them, and the use-case's missing tests show up as a gap in the coverage
+# ribbon and gate. The next run redesigns it automatically (see FAILED_STATE).
 if [ "${#FAILED[@]}" -gt 0 ]; then
-  echo "::error title=Design failed::${#FAILED[@]} use-case(s) failed to design: ${FAILED[*]}."
-  exit 1
+  echo "::warning title=Design failed::${#FAILED[@]} use-case(s) failed to design after a retry: ${FAILED[*]}. Their tests are missing from this run; the next run redesigns them."
 fi

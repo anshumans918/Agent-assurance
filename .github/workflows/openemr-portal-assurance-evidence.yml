@@ -33,6 +33,9 @@ on:
         description: Redesign use-cases that already have a live design
         type: boolean
         default: false
+      force_usecases:
+        description: Use-case ids to redesign even if already designed (e.g. "uc-3")
+        default: ''
 
 # One run at a time across the whole repo, not per ref: every run signs in to the same
 # two shared demo accounts, and a second login ends the first session (PRD BR-005).
@@ -58,7 +61,8 @@ jobs:
   assurance:
     name: 1 · Assurance — requirements to designed tests
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Designing the PRD's 11 use-cases took ~50 minutes on run 1, before any retry.
+    timeout-minutes: 90
     outputs:
       usecase_count: ${{ steps.design.outputs.usecase_count }}
       test_count: ${{ steps.design.outputs.test_count }}
@@ -111,6 +115,7 @@ jobs:
           MAX_PAIRS: ${{ env.MAX_PAIRS }}
           AUTO_APPROVE: 'true'
           FORCE_DESIGN: ${{ inputs.force_design || 'false' }}
+          FORCE_USECASES: ${{ inputs.force_usecases || '' }}
         run: bash scripts/assurance.sh
 
       - name: Save context graph
@@ -134,6 +139,7 @@ jobs:
             echo "|---|---|"
             echo "| Live use-cases | ${{ steps.design.outputs.usecase_count || 0 }} |"
             echo "| Designed tests | ${{ steps.design.outputs.test_count || 0 }} |"
+            echo "| Failed to design | ${{ steps.design.outputs.failed_usecases || 'none' }} |"
             echo
             echo '<details><summary>Context graph nodes</summary>'
             echo

@@ -71,5 +71,22 @@
   },
   "portal_theme": {
     "value": "Dark"
+  },
+  "baseline_pending_comment": {
+    "value": "Automated assurance check - please ignore",
+    "_note": "Comment typed into 'Comments about change request' on Edit Profile. Pooled so kane-cli design reuses it: run 1's uc-3 design failed referencing this name undeclared."
+  },
+  "appointment_duration": {
+    "value": "15"
+  },
+  "appointment_time": {
+    "value": "10:00 AM"
+  },
+  "clinical_document_edit_field_label": {
+    "value": "Additional History",
+    "_note": "Free-text, optional field in the 'Other' group of the History (HIS) form that the Medical History template embeds ({EncounterForm:HIS}); from OpenEMR sql/database.sql, not yet seen on the live demo."
+  },
+  "clinical_document_edit_value": {
+    "value": "Automated assurance check - please ignore"
   }
 }

@@ -29,7 +29,8 @@ runs:
     - name: Install Node
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        # kane-cli's pdfjs-dist dependency requires Node >= 22.13 (EBADENGINE on 20).
+        node-version: '22'
 
     - name: Install kane-cli
       shell: bash

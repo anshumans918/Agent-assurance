@@ -152,6 +152,14 @@ kane-cli context fsck
 - The graph and the designed tests are cached between runs (`.context/`, `.kane-state/`).
   Unchanged requirements are not re-extracted and not billed again.
 
+- A use-case whose design fails is retried once with `--force`. If it still fails, the
+  stage reports a warning, not an error, so the evidence stage still runs the tests that
+  were designed. The missing tests show up as a gap in the coverage gate. The failed ids
+  are kept in `.kane-state/design-failed.txt`, and the next run redesigns them
+  automatically.
+- To redesign specific use-cases by hand, run the workflow with the `force_usecases`
+  input (for example `uc-3`). `force_design` redesigns all of them.
+
 For a governed setup, set `AUTO_APPROVE` to `false`. A person then runs
 `kane-cli context review` locally and commits `.context/`.
 
