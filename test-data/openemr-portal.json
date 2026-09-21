@@ -1,10 +1,7 @@
 {
-  "_comment": "Non-secret test data for the designed OpenEMR portal suite, taken from requirements/openemr-patient-portal-prd.md sections 26-27 (observed on the demo 2026-09-15). Credentials are NOT here: scripts/test_data.py provision adds patient1_*/patient2_* from repository secrets. Names are a first guess, provisioned before design so kane-cli reuses them instead of inventing new ones; reconcile against the first real design run's *_test.md files and the stubs it reports.",
+  "_comment": "Non-secret test data for the designed OpenEMR portal suite, taken from requirements/openemr-patient-portal-prd.md sections 26-27 (observed on the demo 2026-09-15). Credentials are NOT here: scripts/test_data.py provision adds patient1_*/patient2_* (secrets, else the public demo login) and random invalid_* values. Names are a first guess, provisioned before design so kane-cli reuses them instead of inventing new ones; reconcile against the first real design run's *_test.md files and the stubs it reports.",
   "portal_login_url": {
     "value": "https://demo.openemr.io/openemr/portal"
-  },
-  "invalid_password": {
-    "value": "not-the-right-password"
   },
   "invalid_login_error": {
     "value": "Something went wrong. Please try again."

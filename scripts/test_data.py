@@ -9,10 +9,15 @@ unless this script fills it.
 The site under test is the public OpenEMR demo (https://demo.openemr.io/openemr/portal),
 not something this repo starts. Two consequences shape this file:
 
-  * Portal login needs three values — Username, Password and E-Mail Address. They are
-    publicly documented (https://www.open-emr.org/demo/) but are still supplied from
-    repository secrets, never committed, and the password is written with
-    `secret: true` so kane-cli masks it and routes it to the secrets store.
+  * Portal login needs three values — Username, Password and E-Mail Address. Each is
+    read from its OPENEMR_PORTAL_* environment variable (a repository secret) when set,
+    and otherwise falls back to the demo's publicly documented account
+    (https://www.open-emr.org/demo/), so the suite runs without any portal secrets. Set
+    the secrets to point it at a private OpenEMR. Passwords are written with
+    `secret: true` so kane-cli masks them and routes them to the secrets store.
+  * Failed-login tests need credentials that match no account. invalid_username,
+    invalid_password and invalid_email are generated at random on every provision, so
+    they can never collide with a real account or with each other across runs.
   * There is no server to pre-seed. The demo resets around 08:00 UTC every day and is
     shared with the public (PRD BR-014), so tests must set up anything they need inside
     their own session and must not rely on data created by anyone else.
@@ -32,6 +37,7 @@ import glob
 import json
 import os
 import re
+import secrets
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -46,33 +52,44 @@ PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)(?:\.[^}]*)?\s*\}\}")
 # kane-cli resolves these namespaces itself; they never need a pool-file value.
 RUNTIME_NAMESPACES = {"smart", "environment", "secrets", "totp"}
 
-# variable name -> (environment variable holding it, secret?)
-# Patient 1 is Phil Belford (PRD §26), patient 2 is Susan Underwood (PRD §27).
+# variable name -> (environment variable overriding it, public demo default, secret?)
+# Patient 1 is Phil Belford (PRD §26), patient 2 is Susan Underwood (PRD §27). The
+# defaults are the demo's published portal logins, not private credentials.
 CREDENTIALS = {
-    "patient1_username": ("OPENEMR_PORTAL_USER", False),
-    "patient1_password": ("OPENEMR_PORTAL_PASSWORD", True),
-    "patient1_email": ("OPENEMR_PORTAL_EMAIL", False),
-    "patient2_username": ("OPENEMR_PORTAL_USER_2", False),
-    "patient2_password": ("OPENEMR_PORTAL_PASSWORD_2", True),
-    "patient2_email": ("OPENEMR_PORTAL_EMAIL_2", False),
+    "patient1_username": ("OPENEMR_PORTAL_USER", "Phil1", False),
+    "patient1_password": ("OPENEMR_PORTAL_PASSWORD", "phil", True),
+    "patient1_email": ("OPENEMR_PORTAL_EMAIL", "heya@invalid.email.com", False),
+    "patient2_username": ("OPENEMR_PORTAL_USER_2", "Susan2", False),
+    "patient2_password": ("OPENEMR_PORTAL_PASSWORD_2", "susan", True),
+    "patient2_email": ("OPENEMR_PORTAL_EMAIL_2", "nana@invalid.email.com", False),
 }
+
+
+def invalid_credentials() -> dict:
+    """Fresh random credentials for failed-login tests; they match no account."""
+    token = secrets.token_hex(4)
+    return {
+        "invalid_username": {"value": f"nouser-{token}"},
+        "invalid_password": {"value": secrets.token_urlsafe(12), "secret": True},
+        "invalid_email": {"value": f"nouser-{token}@example.invalid"},
+    }
 
 
 def provision() -> int:
     data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
     variables = {k: v for k, v in data.items() if not k.startswith("_")}
 
-    missing_env = []
-    for name, (env, secret) in CREDENTIALS.items():
+    defaulted = []
+    for name, (env, default, secret) in CREDENTIALS.items():
         value = os.environ.get(env, "")
-        if value:
-            variables[name] = {"value": value, "secret": secret}
-        else:
-            missing_env.append(env)
-    if missing_env:
-        # Not fatal here: `check` fails later, and only if a member actually uses one.
-        print(f"::warning title=Missing credentials::Not set: {', '.join(missing_env)}. "
-              "Add them as repository secrets.")
+        if not value:
+            value = default
+            defaulted.append(env)
+        variables[name] = {"value": value, "secret": secret}
+    if defaulted:
+        print(f"Using the public OpenEMR demo login for: {', '.join(defaulted)} (not set).")
+
+    variables.update(invalid_credentials())
 
     if os.environ.get("APP_URL"):
         variables["start_url"] = {"value": os.environ["APP_URL"]}
@@ -141,7 +158,7 @@ def check(members_file: str) -> int:
         return 0
 
     for name, tests in sorted(missing.items()):
-        where = "a repository secret" if name in CREDENTIALS else str(DATA_FILE)
+        where = "scripts/test_data.py" if name in CREDENTIALS or name.startswith("invalid_") else str(DATA_FILE)
         print(f"::error title=Missing test data::{{{{{name}}}}} is used by {len(tests)} test(s) "
               f"but nothing supplies it — add \"{name}\" to {where}.")
         for test in tests:

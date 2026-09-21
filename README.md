@@ -76,12 +76,16 @@ Add these repository secrets (Settings → Secrets and variables → Actions):
 | `LT_ACCESS_KEY` | TestMu AI / LambdaTest access key |
 | `TESTMUAI_PROJECT_ID` | `kane-cli projects list` |
 | `TESTMUAI_FOLDER_ID` | `kane-cli folders list` |
-| `OPENEMR_PORTAL_USER` / `_PASSWORD` / `_EMAIL` | Portal patient 1 (Phil Belford), from [open-emr.org/demo](https://www.open-emr.org/demo/) |
-| `OPENEMR_PORTAL_USER_2` / `_PASSWORD_2` / `_EMAIL_2` | Portal patient 2 (Susan Underwood), from the same page |
 
-The portal credentials are published on the OpenEMR demo page. They are still kept out of
-the repo: the PRD says so, and it makes it easy to point the pipeline at a private
-OpenEMR instance later.
+The portal logins don't need secrets. `scripts/test_data.py` defaults to the demo's
+published accounts from [open-emr.org/demo](https://www.open-emr.org/demo/): Phil Belford
+(patient 1) and Susan Underwood (patient 2). To point the pipeline at a private OpenEMR,
+set any of these optional secrets and they override the defaults:
+
+| Optional secret | Overrides |
+|---|---|
+| `OPENEMR_PORTAL_USER` / `_PASSWORD` / `_EMAIL` | Patient 1 login |
+| `OPENEMR_PORTAL_USER_2` / `_PASSWORD_2` / `_EMAIL_2` | Patient 2 login |
 
 Then push, open a PR that touches `requirements/`, or run the workflow manually from the
 Actions tab.
@@ -94,8 +98,10 @@ three sources:
 
 - `test-data/openemr-portal.json`: expected values from the PRD, such as patient names,
   medications and providers
-- `patient1_*` / `patient2_*` credentials taken from secrets, with passwords marked
-  `secret: true` so kane-cli masks them
+- `patient1_*` / `patient2_*` logins, taken from secrets when set and otherwise the public
+  demo accounts, with passwords marked `secret: true` so kane-cli masks them
+- `invalid_username` / `invalid_password` / `invalid_email` for failed-login tests,
+  randomly generated on every run so they never match a real account
 - `start_url`, taken from `APP_URL`
 
 The one difference from the reference repo is that this runs in the **assurance job too,
@@ -183,7 +189,6 @@ npm install -g @testmuai/kane-cli@0.8.13
 kane-cli login --oauth
 kane-cli config set-url https://demo.openemr.io/openemr/portal
 
-# export OPENEMR_PORTAL_USER=... (and the other five), then:
 python scripts/test_data.py provision
 
 kane-cli context ingest requirements/openemr-patient-portal-prd.md
