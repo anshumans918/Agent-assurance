@@ -301,8 +301,11 @@ jobs:
         id: pack
         run: |
           set -euo pipefail
+          # testrun seals the suite pack last, so the newest is the one to keep (member
+          # runs may leave packs of their own next to it). awk, not `head -1`: head exits
+          # early, sort then dies of SIGPIPE on a long list, and pipefail fails the step.
           PACK=$( { find .testmuai/evidence -name '*.evidence' -printf '%T@ %p\n' 2>/dev/null || true; } \
-                 | sort -rn | head -1 | cut -d' ' -f2-)
+                 | sort -rn | awk 'NR == 1 { sub(/^[^ ]+ /, ""); print }')
           if [ -z "$PACK" ]; then
             echo "::error title=No evidence pack::testrun produced no sealed pack."
             exit 1
@@ -332,10 +335,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: openemr-evidence-${{ github.run_number }}
+          # Only the sealed suite pack, at its full path: the coverage job reads it back
+          # from exactly steps.pack.outputs.path.
           path: |
-            .testmuai/evidence/*.evidence
+            ${{ steps.pack.outputs.path }}
             evidence-validation.json
             testrun.ndjson
+          include-hidden-files: true
           retention-days: 90
           if-no-files-found: warn
 
@@ -368,12 +374,20 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: openemr-evidence-${{ github.run_number }}
-          path: .testmuai/evidence
 
+      # The pack the evidence job validated, by path. `find | head -1` picked whichever
+      # .evidence file find listed first, and under pipefail failed the step with
+      # "find: write error" once there were many.
       - name: Compute the coverage ribbon
+        env:
+          EVIDENCE_PACK: ${{ needs.evidence.outputs.pack }}
         run: |
           set -euo pipefail
-          PACK=$(find .testmuai/evidence -name '*.evidence' | head -1)
+          PACK="$EVIDENCE_PACK"
+          if [ ! -e "$PACK" ]; then
+            echo "::error title=Evidence pack missing::$PACK is not in the openemr-evidence artifact."
+            exit 1
+          fi
           echo "PACK=$PACK" >> "$GITHUB_ENV"
           kane-cli cover --from "$PACK" gaps --rollup strict            > coverage.txt || true
           kane-cli cover --from "$PACK" gaps --rollup strict --json     > coverage.json || true
