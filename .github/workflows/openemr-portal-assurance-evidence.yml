@@ -77,6 +77,9 @@ jobs:
           project-id: ${{ secrets.TESTMUAI_PROJECT_ID }}
           folder-id: ${{ secrets.TESTMUAI_FOLDER_ID }}
 
+      # v2 (2026-09-22): PRD 0.3 could not be re-extracted over the v1 graph on kane-cli
+      # 0.8.13 (CRITERIA_OPS_UNSUPPORTED: updating criteria needs an extract@5+ binding), so
+      # the graph was started fresh. Bump again to force a clean re-extract.
       # The graph is an append-only commit chain. Reusing it across runs means
       # unchanged requirements are not re-extracted and not re-billed.
       # .kane-state holds the designed *_test.md files (see scripts/assurance.sh):
@@ -87,10 +90,10 @@ jobs:
           path: |
             .context
             .kane-state
-          key: kane-assurance-v1-${{ hashFiles('requirements/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: kane-assurance-v2-${{ hashFiles('requirements/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            kane-assurance-v1-${{ hashFiles('requirements/**') }}-
-            kane-assurance-v1-
+            kane-assurance-v2-${{ hashFiles('requirements/**') }}-
+            kane-assurance-v2-
 
       - name: Point kane-cli at the portal
         run: kane-cli config set-url "$APP_URL"
@@ -126,7 +129,7 @@ jobs:
           path: |
             .context
             .kane-state
-          key: kane-assurance-v1-${{ hashFiles('requirements/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: kane-assurance-v2-${{ hashFiles('requirements/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Assurance summary
         if: always()
