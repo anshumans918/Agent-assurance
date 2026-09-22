@@ -172,6 +172,17 @@ kane-cli testrun run .testmuai/tests/*_test.md \
 kane-cli evidence validate .testmuai/evidence/<id>.evidence --profile L1 --json
 ```
 
+Two things protect the run from the shared demo ([scripts/reset_window.py](scripts/reset_window.py)):
+
+- **The daily reset.** The demo returns 502 for about 20 minutes around 08:00 UTC; run 4
+  lost 11 tests to it. At about 160 seconds per test, the job predicts when the suite
+  will end. If the run would overlap 07:45–08:30 UTC, it waits until 08:30 first (at
+  most 150 minutes).
+- **A retry pass.** Every test that didn't pass runs once more as a second execution,
+  unless that would overlap the reset. The two evidence packs are merged, retry last,
+  into the one pack the coverage stage reads. Lost shared-account sessions and brief
+  outages recover this way; a real defect fails twice.
+
 Before any browser starts, the job checks that the demo portal is reachable, so a demo
 outage or reset fails fast and clearly. The pack is uploaded with 90-day retention. It is
 also published to the TestMu AI Test Manager, and the job summary links to it.

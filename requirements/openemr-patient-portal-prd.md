@@ -1,7 +1,7 @@
 # OpenEMR Patient Portal — Demo Healthcare Application
 ## Product Requirements Document (PRD)
 
-**Version:** 0.2 (Verified against live demo on 2026-09-15)  
+**Version:** 0.3 (Verified against live demo on 2026-09-15; navigation and login validation corrected 2026-09-22)  
 **Product:** OpenEMR Patient Portal  
 **Type:** Open-source EHR patient portal (public demo instance with synthetic data)  
 **Primary user:** Patient  
@@ -135,9 +135,13 @@ The demo clinic has three providers available for scheduling:
 
 # 5. Product Navigation
 
-The portal uses a left-side navigation menu. Most sections open as cards inside the dashboard page (`home.php`); Clinical Documents and Secure Messaging open as their own pages.
+After login the portal shows the **Dashboard**: a grid of tiles, each with an icon and a green button carrying the module name. A blue **Dashboard** button in the top bar returns to the tile grid from anywhere. There is no left-side menu at desktop width.
 
-The main navigation contains, in order:
+Most modules open as cards inside the dashboard page (`home.php`). Selecting a tile's green button expands that module's card in place of the tile grid: the tile grid collapses, the module card (for example **Health Snapshot (Medical Lists)**) becomes visible, and the page does not reload. The address bar is not a reliable signal that a card opened; the visible card heading is. The dashboard finishes loading its cards' data in the background after login (**Working! Please wait...**), so a tile should be selected once the dashboard has settled, and selected again if its card did not appear.
+
+Clinical Documents opens its own page. Some features inside cards open their own pages or dialogs (see the entry points below).
+
+The tiles, in order:
 
 1. Dashboard
 2. Clinical Documents
@@ -151,7 +155,25 @@ The main navigation contains, in order:
 10. Help
 11. Logout
 
-There is no separate account dropdown; Settings and Logout are in the main navigation.
+There is no separate account dropdown; Settings and Logout are tiles on the Dashboard.
+
+### Module entry points
+
+Paths are relative to the portal root (`https://demo.openemr.io/openemr/portal/`). "Card" means the module opens in place on `home.php` via its tile; the other entry points are pages that can also be opened directly while signed in.
+
+| Module | Opens as | Entry point |
+|---|---|---|
+| Dashboard | Tile grid | `home.php` |
+| Clinical Documents | Page | `patient/onsitedocuments?pid=<patient id>` (tile link) |
+| Appointments | Card | Appointments tile |
+| Secure Messaging | Card, hosting the mailbox page | Secure Messaging tile; mailbox page `messaging/messages.php` |
+| Health Snapshot | Card | Health Snapshot tile |
+| Profile | Card | Profile tile |
+| Billing Summary | Card, hosting the ledger page | Billing Summary tile; ledger page `report/pat_ledger.php` |
+| Medical Reports | Card with sub-cards | Medical Reports tile; Customized Medical History Report and Download Medical Record Documents are sub-cards; Download Medical Record Documents page `get_patient_documents.php` |
+| Summary of Care | Page / download | Links inside the Medical Reports card |
+| Settings | Card | Settings tile; Manage Login Credentials page `account/index_reset.php`; Default Digital Signature opens a dialog |
+| Logout | Page | `logout.php` |
 
 An **About Portal Dashboard** dialog is available with a **Visit Forum** link (OpenEMR community forum) and a **Close** button.
 
@@ -181,9 +203,7 @@ When credentials are invalid, the portal stays on the login page and shows:
 
 The error does not reveal which field was wrong or whether the username exists.
 
-If Username or Password is empty, the form is not submitted, the empty field is highlighted, and the browser shows:
-
-> Field(s) are missing!
+If Username or Password is empty, the form is not submitted: the page stays on the login page, no session starts, and the empty field is marked as required and invalid. The message for the empty field is shown by the browser's built-in form validation (a native tooltip, not text on the page), so it is not part of the page content.
 
 Selecting a language changes the portal interface language.
 
@@ -202,6 +222,8 @@ An authenticated session remains active according to the configured timeout.
 Only one session per patient account is active at a time; a new login with the same account ends the earlier session.
 
 When a session ends or expires, protected pages return the login page.
+
+On the public demo the patient accounts are shared, so another visitor signing in to the same account can end a session at any time, and a sign-in can occasionally leave the login page displayed. In either case signing in again with the same Username, Password and E-Mail Address, from a freshly loaded login page, restores access to the Dashboard.
 
 ## 6.4 Logout
 
@@ -963,7 +985,7 @@ All demo data is synthetic, shared with other visitors and reset daily. Tests mu
 | Situation | Behavior |
 |---|---|
 | Invalid login | "Something went wrong. Please try again." — stays on login page |
-| Missing Username or Password | Field highlighted; "Field(s) are missing!" |
+| Missing Username or Password | Not submitted; stays on login page; empty field marked required/invalid by browser validation |
 | New passwords differ | "The new password fields are not the same." |
 | Session ended / logged out | Login page shown |
 | Past appointments exceed display limit | "Display limit reached More past appointments may exist" |
@@ -982,6 +1004,8 @@ Buttons should prevent duplicate submission while processing.
 ---
 
 # 24. Accessibility
+
+Accessibility is a secondary goal. Its keyboard checks are limited to what can be observed from the page: controls are reachable with Tab and dialogs can be closed with Escape. Full keyboard-only completion of each workflow below is desired but is not an acceptance criterion for this release.
 
 Keyboard-accessible core workflows:
 
@@ -1263,6 +1287,13 @@ Verified on the live demo on 2026-09-15 by signing in as both demo patients (rea
 - ✅ Clinical Documents toolbar, form list, Save as Draft / Submit Completed, history columns.
 - ✅ Billing Summary form, Medical Reports options, Customized report sections, Settings options.
 - ✅ Phil Belford and Susan Underwood data and separation.
+
+Corrected on 2026-09-22 from the first full evidence run and the dashboard's HTML:
+
+- Navigation is a Dashboard tile grid with a top-bar Dashboard button, not a left-side menu; tiles expand in-page cards (Bootstrap collapse), and a page-level entry point table was added.
+- Empty Username/Password is reported by browser-native validation, not page text.
+- Keyboard-only completion of whole workflows was moved out of the acceptance criteria.
+- The shared demo accounts can lose their session to other visitors; signing in again recovers.
 
 Not yet exercised (would change shared demo data) — confirm during test authoring:
 

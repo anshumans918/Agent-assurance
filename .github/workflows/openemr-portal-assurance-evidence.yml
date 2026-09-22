@@ -61,8 +61,9 @@ jobs:
   assurance:
     name: 1 · Assurance — requirements to designed tests
     runs-on: ubuntu-latest
-    # Designing the PRD's 11 use-cases took ~50 minutes on run 1, before any retry.
-    timeout-minutes: 90
+    # Designing the PRD's 11 use-cases took ~50 minutes at max_pairs 8 on run 1; a full
+    # redesign at 12 plus retries needs more.
+    timeout-minutes: 150
     outputs:
       usecase_count: ${{ steps.design.outputs.usecase_count }}
       test_count: ${{ steps.design.outputs.test_count }}
@@ -171,7 +172,9 @@ jobs:
     name: 2 · Evidence — execute and seal the pack
     needs: assurance
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    # Suite (~2.3 h) + retry pass + up to 150 min waiting out the demo reset; GitHub's
+    # hosted-runner cap is 360.
+    timeout-minutes: 355
     outputs:
       pack: ${{ steps.pack.outputs.path }}
       status: ${{ steps.execute.outputs.status }}
@@ -238,6 +241,15 @@ jobs:
           kane-cli testrun run "${TESTS[@]}" --dry-run \
             --name "OpenEMR portal preflight #${{ github.run_number }}"
 
+      # The demo resets at ~08:00 UTC and returns 502 for ~20 minutes (run 4 lost 11 tests
+      # to it). If the suite, at ~160 s per test, would overlap 07:45-08:30 UTC, wait until
+      # 08:30 first, unless that wait is longer than 150 minutes, in which case run now and
+      # let the retry pass pick up what the reset breaks.
+      - name: Wait out the demo's daily reset
+        env:
+          MEMBER_COUNT: ${{ steps.members.outputs.count }}
+        run: python3 scripts/reset_window.py wait "$MEMBER_COUNT"
+
       # --parallel 1 on purpose: every test signs in as one of two shared demo patients,
       # and a second login with the same account ends the first session (PRD BR-005),
       # so two workers would log each other out mid-test.
@@ -257,6 +269,73 @@ jobs:
           echo "status=$CODE" >> "$GITHUB_OUTPUT"
           if [ "$CODE" -eq 2 ]; then exit 2; fi
           exit 0
+
+      - name: Locate the first-pass pack
+        id: pack1
+        run: |
+          set -euo pipefail
+          # testrun seals the suite pack last, so the newest is the one to keep. awk, not
+          # `head -1`: head exits early, sort dies of SIGPIPE, and pipefail fails the step.
+          PACK=$( { find .testmuai/evidence -name '*.evidence' -printf '%T@ %p\n' 2>/dev/null || true; } \
+                 | sort -rn | awk 'NR == 1 { sub(/^[^ ]+ /, ""); print }')
+          if [ -z "$PACK" ]; then
+            echo "::error title=No evidence pack::testrun produced no sealed pack."
+            exit 1
+          fi
+          echo "path=$PACK" >> "$GITHUB_OUTPUT"
+          ls -lh "$PACK"
+
+      # One more attempt for every member that did not pass, as a second execution.
+      # Shared-account session loss, a slow dashboard and brief demo outages are
+      # transient; a real defect fails twice. Skipped if it would run into the reset.
+      - name: Retry failed members once
+        id: retry
+        run: |
+          set -uo pipefail
+          python3 scripts/reset_window.py failed testrun.ndjson > retry.txt
+          COUNT=$(grep -c . retry.txt || true)
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          if [ "$COUNT" -eq 0 ]; then echo "Nothing to retry."; exit 0; fi
+          if ! python3 scripts/reset_window.py clear "$COUNT"; then
+            echo "::warning title=Retry skipped::Retrying ${COUNT} member(s) now would overlap the demo reset."
+            exit 0
+          fi
+          echo "Retrying ${COUNT} member(s)."
+          set +e
+          mapfile -t TESTS < retry.txt
+          kane-cli testrun run "${TESTS[@]}" \
+            --name "OpenEMR portal regression #${{ github.run_number }} retry (${GITHUB_SHA:0:7})" \
+            --parallel 1 \
+            --on-failure continue \
+            --headless \
+            | tee testrun-retry.ndjson
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      # Coverage reads one pack, so the retry's pack is merged after the first pass's
+      # (order-significant: the retry comes last). If the merge is refused, coverage
+      # falls back to the first pass alone.
+      - name: Combine the passes into one pack
+        id: pack
+        run: |
+          set -uo pipefail
+          FIRST="${{ steps.pack1.outputs.path }}"
+          FINAL="$FIRST"
+          if [ -s testrun-retry.ndjson ]; then
+            SECOND=$( { find .testmuai/evidence -name '*.evidence' -newer "$FIRST" -printf '%T@ %p\n' 2>/dev/null || true; } \
+                     | sort -rn | awk 'NR == 1 { sub(/^[^ ]+ /, ""); print }')
+            if [ -n "$SECOND" ]; then
+              RUN_ID="openemr-${{ github.run_number }}-${{ github.run_attempt }}"
+              if kane-cli evidence merge "$FIRST" "$SECOND" --run-id "$RUN_ID"; then
+                FINAL=".testmuai/evidence/${RUN_ID}.evidence"
+              else
+                echo "::warning title=Merge refused::Could not merge the retry pack; coverage uses the first pass only."
+              fi
+            fi
+          fi
+          [ -e "$FINAL" ] || { echo "::error::Final pack $FINAL missing."; exit 1; }
+          echo "path=$FINAL" >> "$GITHUB_OUTPUT"
+          ls -lh "$FINAL"
 
       # testrun publishes the whole batch's evidence pack to the TMS dashboard via a
       # testrun_evidence_ingest event; absent means publish was skipped.
@@ -297,22 +376,6 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: Locate the sealed pack
-        id: pack
-        run: |
-          set -euo pipefail
-          # testrun seals the suite pack last, so the newest is the one to keep (member
-          # runs may leave packs of their own next to it). awk, not `head -1`: head exits
-          # early, sort then dies of SIGPIPE on a long list, and pipefail fails the step.
-          PACK=$( { find .testmuai/evidence -name '*.evidence' -printf '%T@ %p\n' 2>/dev/null || true; } \
-                 | sort -rn | awk 'NR == 1 { sub(/^[^ ]+ /, ""); print }')
-          if [ -z "$PACK" ]; then
-            echo "::error title=No evidence pack::testrun produced no sealed pack."
-            exit 1
-          fi
-          echo "path=$PACK" >> "$GITHUB_OUTPUT"
-          ls -lh "$PACK"
-
       - name: Validate the pack
         run: |
           set -euo pipefail
@@ -341,6 +404,7 @@ jobs:
             ${{ steps.pack.outputs.path }}
             evidence-validation.json
             testrun.ndjson
+            testrun-retry.ndjson
           include-hidden-files: true
           retention-days: 90
           if-no-files-found: warn
