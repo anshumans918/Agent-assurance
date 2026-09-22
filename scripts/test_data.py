@@ -62,6 +62,23 @@ CREDENTIALS = {
     "patient2_username": ("OPENEMR_PORTAL_USER_2", "Susan2", False),
     "patient2_password": ("OPENEMR_PORTAL_PASSWORD_2", "susan", True),
     "patient2_email": ("OPENEMR_PORTAL_EMAIL_2", "nana@invalid.email.com", False),
+    # Role-named accounts kane-cli design asked for (run 6), mapped onto the demo's
+    # accounts per PRD §26-27: Susan has no future appointments and (unlike Phil, whom
+    # the scheduling and messaging tests write to) nothing that adds to her mailbox;
+    # Phil's past appointments exceed the display limit.
+    "empty_mailbox_username": ("OPENEMR_PORTAL_USER_2", "Susan2", False),
+    "empty_mailbox_password": ("OPENEMR_PORTAL_PASSWORD_2", "susan", True),
+    "patient_no_future_appointments_username": ("OPENEMR_PORTAL_USER_2", "Susan2", False),
+    "patient_no_future_appointments_password": ("OPENEMR_PORTAL_PASSWORD_2", "susan", True),
+    "patient_with_many_past_appointments_username": ("OPENEMR_PORTAL_USER", "Phil1", False),
+    "patient_with_many_past_appointments_password": ("OPENEMR_PORTAL_PASSWORD", "phil", True),
+    # The change-credentials tests sign in as patient 1 and fill the new-password
+    # fields. Using patient 1's CURRENT password means an accidental save changes
+    # nothing — a real change would lock every later test (and the public) out.
+    "new_portal_password": ("OPENEMR_PORTAL_PASSWORD", "phil", True),
+    # Staff-side recipient check for Secure Messaging: the demo's published admin login.
+    "care_team_username": ("OPENEMR_STAFF_USER", "admin", False),
+    "care_team_password": ("OPENEMR_STAFF_PASSWORD", "pass", True),
 }
 
 
@@ -72,6 +89,8 @@ def invalid_credentials() -> dict:
         "invalid_username": {"value": f"nouser-{token}"},
         "invalid_password": {"value": secrets.token_urlsafe(12), "secret": True},
         "invalid_email": {"value": f"nouser-{token}@example.invalid"},
+        # Only ever typed into the confirm field against new_portal_password.
+        "different_portal_password": {"value": f"mismatch-{secrets.token_hex(4)}", "secret": True},
     }
 
 

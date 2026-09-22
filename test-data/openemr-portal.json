@@ -88,5 +88,16 @@
   },
   "clinical_document_edit_value": {
     "value": "Automated assurance check - please ignore"
+  },
+  "openemr_staff_url": {
+    "value": "https://demo.openemr.io/openemr"
+  },
+  "patient2_appointment_marker": {
+    "value": "Donna Lee",
+    "_note": "Susan's provider on her appointment rows (PRD §27); Phil's are with Billy Smith."
+  },
+  "unavailable_appointment_time": {
+    "value": "11:45 PM",
+    "_note": "Outside clinic hours, so absent from any provider's See Availability slots."
   }
 }
