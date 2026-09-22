@@ -1,7 +1,7 @@
 # OpenEMR Patient Portal — Demo Healthcare Application
 ## Product Requirements Document (PRD)
 
-**Version:** 0.3 (Verified against live demo on 2026-09-15; navigation and login validation corrected 2026-09-22)  
+**Version:** 0.4 (Verified against live demo on 2026-09-15; navigation, login validation and the card-tile defect recorded 2026-09-22)  
 **Product:** OpenEMR Patient Portal  
 **Type:** Open-source EHR patient portal (public demo instance with synthetic data)  
 **Primary user:** Patient  
@@ -137,7 +137,9 @@ The demo clinic has three providers available for scheduling:
 
 After login the portal shows the **Dashboard**: a grid of tiles, each with an icon and a green button carrying the module name. A blue **Dashboard** button in the top bar returns to the tile grid from anywhere. There is no left-side menu at desktop width.
 
-Most modules open as cards inside the dashboard page (`home.php`). Selecting a tile's green button expands that module's card in place of the tile grid: the tile grid collapses, the module card (for example **Health Snapshot (Medical Lists)**) becomes visible, and the page does not reload. The address bar is not a reliable signal that a card opened; the visible card heading is. The dashboard finishes loading its cards' data in the background after login (**Working! Please wait...**), so a tile should be selected once the dashboard has settled, and selected again if its card did not appear.
+Most modules open as cards inside the dashboard page (`home.php`). Selecting a tile's green button expands that module's card in place of the tile grid: the tile grid collapses, the module card (for example **Health Snapshot (Medical Lists)**) becomes visible, and the page does not reload. The address bar is not a reliable signal that a card opened; the visible card heading is.
+
+**Known defect (demo, observed 2026-09-22):** in Chrome, selecting a card tile does not open its card. The dashboard page loads jQuery and Bootstrap four times, so each tile click toggles the card an even number of times and it ends closed; the tile grid stays on screen. Tile-to-card navigation ("selecting a card opens the module") is therefore expected to fail until this is fixed. Each module's content remains reachable from its standalone page in the entry-point table below, and content checks should use that page rather than the tile.
 
 Clinical Documents opens its own page. Some features inside cards open their own pages or dialogs (see the entry points below).
 
@@ -159,20 +161,20 @@ There is no separate account dropdown; Settings and Logout are tiles on the Dash
 
 ### Module entry points
 
-Paths are relative to the portal root (`https://demo.openemr.io/openemr/portal/`). "Card" means the module opens in place on `home.php` via its tile; the other entry points are pages that can also be opened directly while signed in.
+Paths are relative to the portal root (`https://demo.openemr.io/openemr/portal/`) and open directly in the browser while signed in (a signed-out request returns the login page). "Card" means the module opens in place on `home.php` via its tile. `<pid>` is the signed-in patient's id, visible in the Clinical Documents tile link (`pid=1` for Phil Belford).
 
 | Module | Opens as | Entry point |
 |---|---|---|
 | Dashboard | Tile grid | `home.php` |
 | Clinical Documents | Page | `patient/onsitedocuments?pid=<patient id>` (tile link) |
-| Appointments | Card | Appointments tile |
-| Secure Messaging | Card, hosting the mailbox page | Secure Messaging tile; mailbox page `messaging/messages.php` |
-| Health Snapshot | Card | Health Snapshot tile |
-| Profile | Card | Profile tile |
-| Billing Summary | Card, hosting the ledger page | Billing Summary tile; ledger page `report/pat_ledger.php` |
-| Medical Reports | Card with sub-cards | Medical Reports tile; Customized Medical History Report and Download Medical Record Documents are sub-cards; Download Medical Record Documents page `get_patient_documents.php` |
+| Appointments | Card | Appointments tile only (no standalone page) |
+| Secure Messaging | Card, hosting the mailbox page | Mailbox page `messaging/messages.php` (heading Secure Messaging) |
+| Health Snapshot | Card built from list pages | `get_problems.php` (Current Problems), `get_medications.php` (Current Medications), `get_allergies.php` (Medication Allergies), `get_prescriptions.php` (Active Prescriptions), `get_lab_results.php` (Lab Results); each shows the section's table or **No Results**. Patient Immunization is in the card only |
+| Profile | Card | Profile page `patient/patientdata?pid=<pid>&user=<username>` (Patient Portal – Patient Data) |
+| Billing Summary | Card, hosting the ledger page | Ledger page `report/pat_ledger.php` (Patient Billing Summary by Date) |
+| Medical Reports | Card with sub-cards | Customized Medical History Report `report/portal_patient_report.php?pid=<pid>`; Download Medical Record Documents `get_patient_documents.php` (Download On File Documents) |
 | Summary of Care | Page / download | Links inside the Medical Reports card |
-| Settings | Card | Settings tile; Manage Login Credentials page `account/index_reset.php`; Default Digital Signature opens a dialog |
+| Settings | Card | Manage Login Credentials page `account/index_reset.php` (Change Portal Credentials); Select Theme and Default Digital Signature are in the card only |
 | Logout | Page | `logout.php` |
 
 An **About Portal Dashboard** dialog is available with a **Visit Forum** link (OpenEMR community forum) and a **Close** button.
@@ -1294,6 +1296,7 @@ Corrected on 2026-09-22 from the first full evidence run and the dashboard's HTM
 - Empty Username/Password is reported by browser-native validation, not page text.
 - Keyboard-only completion of whole workflows was moved out of the acceptance criteria.
 - The shared demo accounts can lose their session to other visitors; signing in again recovers.
+- Card tiles do not open their cards in Chrome (jQuery/Bootstrap loaded four times; confirmed in a real headless Chrome, where `$('#lists').collapse('show')` does open it). Standalone pages for each module were verified to load while signed in and added to the entry-point table.
 
 Not yet exercised (would change shared demo data) — confirm during test authoring:
 

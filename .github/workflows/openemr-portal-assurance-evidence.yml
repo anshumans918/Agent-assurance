@@ -77,9 +77,9 @@ jobs:
           project-id: ${{ secrets.TESTMUAI_PROJECT_ID }}
           folder-id: ${{ secrets.TESTMUAI_FOLDER_ID }}
 
-      # v2 (2026-09-22): PRD 0.3 could not be re-extracted over the v1 graph on kane-cli
-      # 0.8.13 (CRITERIA_OPS_UNSUPPORTED: updating criteria needs an extract@5+ binding), so
-      # the graph was started fresh. Bump again to force a clean re-extract.
+      # Bumped (v2, v3) whenever the PRD changes enough to need a clean graph: kane-cli
+      # 0.8.13 cannot re-extract changed criteria over an existing graph
+      # (CRITERIA_OPS_UNSUPPORTED: updating criteria needs an extract@5+ binding).
       # The graph is an append-only commit chain. Reusing it across runs means
       # unchanged requirements are not re-extracted and not re-billed.
       # .kane-state holds the designed *_test.md files (see scripts/assurance.sh):
@@ -90,10 +90,10 @@ jobs:
           path: |
             .context
             .kane-state
-          key: kane-assurance-v2-${{ hashFiles('requirements/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: kane-assurance-v3-${{ hashFiles('requirements/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            kane-assurance-v2-${{ hashFiles('requirements/**') }}-
-            kane-assurance-v2-
+            kane-assurance-v3-${{ hashFiles('requirements/**') }}-
+            kane-assurance-v3-
 
       - name: Point kane-cli at the portal
         run: kane-cli config set-url "$APP_URL"
@@ -129,7 +129,7 @@ jobs:
           path: |
             .context
             .kane-state
-          key: kane-assurance-v2-${{ hashFiles('requirements/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: kane-assurance-v3-${{ hashFiles('requirements/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Assurance summary
         if: always()
@@ -262,13 +262,28 @@ jobs:
           set -uo pipefail
           set +e
           mapfile -t TESTS < members.txt
-          kane-cli testrun run "${TESTS[@]}" \
-            --name "OpenEMR portal regression #${{ github.run_number }} (${GITHUB_SHA:0:7})" \
-            --parallel 1 \
-            --on-failure continue \
-            --headless \
-            | tee testrun.ndjson
-          CODE=${PIPESTATUS[0]}
+          run_suite() {
+            kane-cli testrun run "${TESTS[@]}" \
+              --name "OpenEMR portal regression #${{ github.run_number }}$1 (${GITHUB_SHA:0:7})" \
+              --parallel 1 \
+              --on-failure continue \
+              --headless \
+              | tee "$2"
+            return "${PIPESTATUS[0]}"
+          }
+          run_suite "" testrun.ndjson
+          CODE=$?
+          # New members are authored one by one and no suite execution is sealed
+          # (execution_id empty). Run the suite again to replay what was just recorded
+          # as one execution, which is the pack coverage needs.
+          if [ -z "$(python3 scripts/testrun_stream.py execution-id testrun.ndjson)" ] \
+             && [ "$(python3 scripts/testrun_stream.py authored testrun.ndjson)" -gt 0 ]; then
+            echo "Authoring pass only ($(python3 scripts/testrun_stream.py authored testrun.ndjson) member(s)); running the suite again as one execution."
+            mv testrun.ndjson testrun-authoring.ndjson
+            python3 scripts/reset_window.py wait "$(wc -l < members.txt)"
+            run_suite "" testrun.ndjson
+            CODE=$?
+          fi
           echo "status=$CODE" >> "$GITHUB_OUTPUT"
           if [ "$CODE" -eq 2 ]; then exit 2; fi
           exit 0
@@ -277,12 +292,10 @@ jobs:
         id: pack1
         run: |
           set -euo pipefail
-          # testrun seals the suite pack last, so the newest is the one to keep. awk, not
-          # `head -1`: head exits early, sort dies of SIGPIPE, and pipefail fails the step.
-          PACK=$( { find .testmuai/evidence -name '*.evidence' -printf '%T@ %p\n' 2>/dev/null || true; } \
-                 | sort -rn | awk 'NR == 1 { sub(/^[^ ]+ /, ""); print }')
-          if [ -z "$PACK" ]; then
-            echo "::error title=No evidence pack::testrun produced no sealed pack."
+          EXEC_ID=$(python3 scripts/testrun_stream.py execution-id testrun.ndjson)
+          PACK=".testmuai/evidence/${EXEC_ID}.evidence"
+          if [ -z "$EXEC_ID" ] || [ ! -e "$PACK" ]; then
+            echo "::error title=No suite pack::testrun sealed no suite execution (execution id '${EXEC_ID}'). Member packs are not a suite pack; see testrun.ndjson."
             exit 1
           fi
           echo "path=$PACK" >> "$GITHUB_OUTPUT"
@@ -295,7 +308,7 @@ jobs:
         id: retry
         run: |
           set -uo pipefail
-          python3 scripts/reset_window.py failed testrun.ndjson > retry.txt
+          python3 scripts/testrun_stream.py failed testrun.ndjson > retry.txt
           COUNT=$(grep -c . retry.txt || true)
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           if [ "$COUNT" -eq 0 ]; then echo "Nothing to retry."; exit 0; fi
@@ -325,9 +338,9 @@ jobs:
           FIRST="${{ steps.pack1.outputs.path }}"
           FINAL="$FIRST"
           if [ -s testrun-retry.ndjson ]; then
-            SECOND=$( { find .testmuai/evidence -name '*.evidence' -newer "$FIRST" -printf '%T@ %p\n' 2>/dev/null || true; } \
-                     | sort -rn | awk 'NR == 1 { sub(/^[^ ]+ /, ""); print }')
-            if [ -n "$SECOND" ]; then
+            RETRY_ID=$(python3 scripts/testrun_stream.py execution-id testrun-retry.ndjson)
+            SECOND=".testmuai/evidence/${RETRY_ID}.evidence"
+            if [ -n "$RETRY_ID" ] && [ -e "$SECOND" ]; then
               RUN_ID="openemr-${{ github.run_number }}-${{ github.run_attempt }}"
               if kane-cli evidence merge "$FIRST" "$SECOND" --run-id "$RUN_ID"; then
                 FINAL=".testmuai/evidence/${RUN_ID}.evidence"
@@ -407,6 +420,7 @@ jobs:
             ${{ steps.pack.outputs.path }}
             evidence-validation.json
             testrun.ndjson
+            testrun-authoring.ndjson
             testrun-retry.ndjson
           include-hidden-files: true
           retention-days: 90
