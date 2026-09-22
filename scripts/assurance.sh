@@ -89,8 +89,13 @@ STATE_DIR=".kane-state/tests"
 # Use-cases whose design failed, kept with the graph. A failed design can still leave
 # draft ACs and scenarios behind, which `cover gaps` then rates "partial" — and a
 # partial use-case is skipped. Without this list a failed use-case would never be
-# designed again; with it, the next run redesigns it with --force.
+# designed again; with it, the next run redesigns it with --force. Each line is
+# "<uc-id> <consecutive failures>": after MAX_AUTO_REDESIGN failures in a row the
+# use-case is no longer redesigned automatically (runs 6-7: uc-1 failed on the same
+# kane-cli CARDINALITY_VIOLATION every time, paid for on every run). force_usecases
+# still redesigns it on request.
 FAILED_STATE=".kane-state/design-failed.txt"
+MAX_AUTO_REDESIGN="${MAX_AUTO_REDESIGN:-2}"
 
 # Live test ids in the graph, one per line.
 graph_test_ids() {
@@ -218,9 +223,19 @@ fi
 
 declare -A FORCED=()
 for uc in ${FORCE_USECASES//,/ }; do FORCED["$uc"]="requested"; done
+declare -A FAIL_COUNT=()
 if [ -f "$FAILED_STATE" ]; then
-  while read -r uc; do
-    if [ -n "$uc" ] && [ -z "${FORCED[$uc]:-}" ]; then FORCED["$uc"]="failed on an earlier run"; fi
+  while read -r uc count; do
+    [ -n "$uc" ] || continue
+    [[ "$count" =~ ^[0-9]+$ ]] || count=1
+    FAIL_COUNT["$uc"]="$count"
+    if [ -n "${FORCED[$uc]:-}" ]; then
+      :
+    elif [ "$count" -ge "$MAX_AUTO_REDESIGN" ]; then
+      echo "::warning title=Not redesigning ${uc}::Its design failed in ${count} consecutive runs, so it is no longer redesigned automatically. Its criteria stay unproven; retry with the force_usecases input, or report the failure (its session id is in the earlier run's log) to TestMu support."
+    else
+      FORCED["$uc"]="failed on an earlier run"
+    fi
   done < "$FAILED_STATE"
 fi
 
@@ -303,7 +318,19 @@ fi
 
 stash_designed_tests
 mkdir -p "$(dirname "$FAILED_STATE")"
-printf '%s\n' "${FAILED[@]}" | sed '/^$/d' > "$FAILED_STATE"
+{
+  # Failed this run: one more in the streak.
+  for uc in "${FAILED[@]}"; do
+    echo "$uc $(( ${FAIL_COUNT[$uc]:-0} + 1 ))"
+  done
+  # Held back by the cap (not attempted): keep their streak so they stay held back.
+  for uc in "${!FAIL_COUNT[@]}"; do
+    if [ -z "${FORCED[$uc]:-}" ] && [[ " ${FAILED[*]} " != *" ${uc} "* ]] \
+       && [ "${FAIL_COUNT[$uc]}" -ge "$MAX_AUTO_REDESIGN" ]; then
+      echo "$uc ${FAIL_COUNT[$uc]}"
+    fi
+  done
+} > "$FAILED_STATE"
 
 # kane-cli 0.8.12+ reuses a variable name that already exists in a pool file and
 # declares an empty stub in .testmuai/variables/assurance.json for each one it

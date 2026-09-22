@@ -66,12 +66,17 @@ CREDENTIALS = {
     # accounts per PRD §26-27: Susan has no future appointments and (unlike Phil, whom
     # the scheduling and messaging tests write to) nothing that adds to her mailbox;
     # Phil's past appointments exceed the display limit.
+    # Each role account has all three login values pooled, so the next design reuses the
+    # _email name instead of signing in with only a username and password.
     "empty_mailbox_username": ("OPENEMR_PORTAL_USER_2", "Susan2", False),
     "empty_mailbox_password": ("OPENEMR_PORTAL_PASSWORD_2", "susan", True),
+    "empty_mailbox_email": ("OPENEMR_PORTAL_EMAIL_2", "nana@invalid.email.com", False),
     "patient_no_future_appointments_username": ("OPENEMR_PORTAL_USER_2", "Susan2", False),
     "patient_no_future_appointments_password": ("OPENEMR_PORTAL_PASSWORD_2", "susan", True),
+    "patient_no_future_appointments_email": ("OPENEMR_PORTAL_EMAIL_2", "nana@invalid.email.com", False),
     "patient_with_many_past_appointments_username": ("OPENEMR_PORTAL_USER", "Phil1", False),
     "patient_with_many_past_appointments_password": ("OPENEMR_PORTAL_PASSWORD", "phil", True),
+    "patient_with_many_past_appointments_email": ("OPENEMR_PORTAL_EMAIL", "heya@invalid.email.com", False),
     # The change-credentials tests sign in as patient 1 and fill the new-password
     # fields. Using patient 1's CURRENT password means an accidental save changes
     # nothing — a real change would lock every later test (and the public) out.
@@ -161,16 +166,39 @@ def stored_in_run(text: str) -> set[str]:
     return set(re.findall(r"\b(?:as|note)\s+['\"`]?([A-Za-z_][A-Za-z0-9_]*)", text))
 
 
-def check(members_file: str) -> int:
+def missing_emails(used: set[str]) -> list[str]:
+    """`<prefix>_username` names used without their `<prefix>_email`. Portal login needs
+    all three values (PRD BR-002); run 6 designed sign-ins with only a username and
+    password for role-named accounts, which cannot reach the Dashboard."""
+    gaps = []
+    for name in sorted(used):
+        if name.endswith("_username"):
+            email = name[: -len("_username")] + "_email"
+            if email in CREDENTIALS and email not in used:
+                gaps.append(f"{name} without {email}")
+    return gaps
+
+
+def check(members_file: str, runnable_out: str | None = None) -> int:
     members = [line.strip() for line in Path(members_file).read_text(encoding="utf-8").splitlines() if line.strip()]
     supplied = supplied_keys()
     missing: dict[str, list[str]] = defaultdict(list)
+    blocked: set[str] = set()
 
     for member in members:
         text = Path(member).read_text(encoding="utf-8").replace("\r\n", "\n")
+        used = set(PLACEHOLDER.findall(text))
         known = supplied | frontmatter_keys(text) | stored_in_run(text) | RUNTIME_NAMESPACES
-        for name in sorted(set(PLACEHOLDER.findall(text)) - known):
+        for name in sorted(used - known):
             missing[name].append(member)
+            blocked.add(member)
+        for gap in missing_emails(used):
+            print(f"::warning title=Sign-in without email::{Path(member).name} signs in with {gap}; "
+                  "portal login needs Username, Password and E-Mail Address, so this test is likely to fail.")
+
+    runnable = [m for m in members if m not in blocked]
+    if runnable_out:
+        Path(runnable_out).write_text("".join(f"{m}\n" for m in runnable), encoding="utf-8")
 
     if not missing:
         print(f"Test data OK: every variable used by {len(members)} member(s) is supplied.")
@@ -178,10 +206,19 @@ def check(members_file: str) -> int:
 
     for name, tests in sorted(missing.items()):
         where = "scripts/test_data.py" if name in CREDENTIALS or name.startswith("invalid_") else str(DATA_FILE)
-        print(f"::error title=Missing test data::{{{{{name}}}}} is used by {len(tests)} test(s) "
+        level = "warning" if runnable_out else "error"
+        print(f"::{level} title=Missing test data::{{{{{name}}}}} is used by {len(tests)} test(s) "
               f"but nothing supplies it — add \"{name}\" to {where}.")
         for test in tests:
             print(f"    {test}")
+
+    # With --runnable-out, one unsupplied variable no longer stops the whole suite
+    # (run 6 lost all 58 tests to 13 names): only the tests that use it are left out,
+    # and their acceptance criteria show up as not run in the coverage ribbon.
+    if runnable_out and runnable:
+        print(f"{len(missing)} variable(s) unsupplied; leaving out {len(blocked)} test(s), "
+              f"running the other {len(runnable)}.")
+        return 0
     print(f"{len(missing)} variable(s) unsupplied; stopping before any browser minute is spent.")
     return 1
 
@@ -210,12 +247,14 @@ def main() -> int:
     sub.add_parser("stubs")
     check_parser = sub.add_parser("check")
     check_parser.add_argument("members", help="file listing one *_test.md path per line")
+    check_parser.add_argument("--runnable-out", help="write the members whose variables are all supplied "
+                              "here and succeed if there is at least one, instead of failing on any gap")
     args = parser.parse_args()
     if args.command == "provision":
         return provision()
     if args.command == "stubs":
         return stubs()
-    return check(args.members)
+    return check(args.members, args.runnable_out)
 
 
 if __name__ == "__main__":

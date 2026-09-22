@@ -9,6 +9,7 @@ on:
     paths:
       - 'requirements/**'
       - '.testmuai/tests/**'
+      - '.testmuai/context.md'
       - 'test-data/**'
       - 'scripts/**'
       - '.github/workflows/openemr-portal-assurance-evidence.yml'
@@ -16,6 +17,7 @@ on:
     paths:
       - 'requirements/**'
       - '.testmuai/tests/**'
+      - '.testmuai/context.md'
       - 'test-data/**'
       - 'scripts/**'
   schedule:
@@ -68,7 +70,7 @@ jobs:
       usecase_count: ${{ steps.design.outputs.usecase_count }}
       test_count: ${{ steps.design.outputs.test_count }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: ./.github/actions/setup-kane
         with:
@@ -85,7 +87,7 @@ jobs:
       # .kane-state holds the designed *_test.md files (see scripts/assurance.sh):
       # kane-cli cannot rebuild them from the graph, so they travel with it.
       - name: Restore context graph
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: |
             .context
@@ -124,7 +126,7 @@ jobs:
 
       - name: Save context graph
         if: ${{ !cancelled() && (steps.design.outcome == 'success' || steps.design.outcome == 'failure') }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: |
             .context
@@ -156,7 +158,7 @@ jobs:
 
       - name: Publish the graph and the designed tests
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: assurance-graph-${{ github.run_number }}
           path: |
@@ -182,7 +184,7 @@ jobs:
       pack: ${{ steps.pack.outputs.path }}
       status: ${{ steps.execute.outputs.status }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: ./.github/actions/setup-kane
         with:
@@ -192,12 +194,12 @@ jobs:
           folder-id: ${{ secrets.TESTMUAI_FOLDER_ID }}
 
       - name: Fetch the designed tests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: assurance-graph-${{ github.run_number }}
 
       - name: Restore recorded steps
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: .testmuai/tests/output-*
           key: kane-recordings-${{ github.run_id }}-${{ github.run_attempt }}
@@ -236,10 +238,18 @@ jobs:
           echo "count=$(wc -l < members.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
           cat members.txt
 
+      # Tests whose {{variables}} are not all supplied are left out, not the whole suite
+      # (run 6 lost all 58 tests to 13 unsupplied names); their criteria show as not run.
       - name: Preflight
+        id: preflight
         run: |
           set -euo pipefail
-          python3 scripts/test_data.py check members.txt
+          python3 scripts/test_data.py check members.txt --runnable-out runnable.txt
+          if ! cmp -s members.txt runnable.txt; then
+            echo "Running $(wc -l < runnable.txt | tr -d ' ') of $(wc -l < members.txt | tr -d ' ') designed tests."
+            mv runnable.txt members.txt
+          fi
+          echo "count=$(wc -l < members.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
           mapfile -t TESTS < members.txt
           kane-cli testrun run "${TESTS[@]}" --dry-run \
             --name "OpenEMR portal preflight #${{ github.run_number }}"
@@ -250,7 +260,7 @@ jobs:
       # let the retry pass pick up what the reset breaks.
       - name: Wait out the demo's daily reset
         env:
-          MEMBER_COUNT: ${{ steps.members.outputs.count }}
+          MEMBER_COUNT: ${{ steps.preflight.outputs.count }}
         run: python3 scripts/reset_window.py wait "$MEMBER_COUNT"
 
       # --parallel 1 on purpose: every test signs in as one of two shared demo patients,
@@ -377,14 +387,14 @@ jobs:
 
       - name: Save recorded steps
         if: always() && steps.execute.outcome != 'skipped'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: .testmuai/tests/output-*
           key: kane-recordings-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Publish the executed graph
         if: always() && steps.execute.outcome != 'skipped'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: assurance-graph-executed-${{ github.run_number }}
           path: .context/
@@ -411,7 +421,7 @@ jobs:
 
       - name: Publish the evidence pack
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: openemr-evidence-${{ github.run_number }}
           # Only the sealed suite pack, at its full path: the coverage job reads it back
@@ -437,7 +447,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: ./.github/actions/setup-kane
         with:
@@ -447,12 +457,12 @@ jobs:
           folder-id: ${{ secrets.TESTMUAI_FOLDER_ID }}
 
       - name: Fetch the executed graph
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: assurance-graph-executed-${{ github.run_number }}
           path: .context
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: openemr-evidence-${{ github.run_number }}
 
@@ -485,7 +495,7 @@ jobs:
 
       - name: Comment the ribbon on the PR
         if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');
@@ -518,7 +528,7 @@ jobs:
 
       - name: Publish the coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: openemr-coverage-${{ github.run_number }}
           path: |
