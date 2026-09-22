@@ -50,8 +50,15 @@ def main() -> int:
     elif command == "authored":
         print(sum(1 for e in events(path) if e.get("type") == "testrun_authored_member_end"))
     else:
+        # Both shapes count: a replay emits testrun_member_end, while a first run that
+        # authors its members emits testrun_authored_member_end and can still seal a
+        # suite execution (run 11 did, and its 38 failures went unretried because only
+        # the replay shape was read here).
+        seen = set()
         for event in events(path):
-            if event.get("type") == "testrun_member_end" and event.get("status") != "passed":
+            if event.get("type") in ("testrun_member_end", "testrun_authored_member_end") \
+                    and event.get("status") != "passed" and event["path"] not in seen:
+                seen.add(event["path"])
                 print(event["path"])
     return 0
 

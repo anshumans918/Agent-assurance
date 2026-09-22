@@ -39,12 +39,23 @@ These apply to every test in this project, while authoring and while replaying.
   | Customized Medical History Report | `report/portal_patient_report.php?pid=<pid>` |
   | Download Medical Record Documents | `get_patient_documents.php` |
   | Manage Login Credentials | `account/index_reset.php` |
+  | Schedule an appointment (Add New Event) | `add_edit_event_user.php?eid=0&pid=<pid>` |
+  | Compose a secure message | `messaging/messages.php?task=compose` |
   | Clinical Documents | the Clinical Documents tile (it is a normal link) |
 
-  `<pid>` is the signed-in patient's id: `1` for Phil1, shown in the Clinical Documents
-  tile link. Appointments, Patient Immunization, Select Theme, Default Digital Signature
-  and Help have no page of their own; if their card does not open, report that as the
-  result rather than looking for another route.
+  `<pid>` is the signed-in patient's id: `1` for Phil1, `2` for Susan2, shown in the
+  Clinical Documents tile link. The appointment **lists** (Future and Past
+  Appointments), Patient Immunization, Select Theme, Default Digital Signature and Help
+  have no page of their own; if their card does not open, report that as the result
+  rather than looking for another route.
+
+## Manage Login Credentials
+
+The form at `account/index_reset.php` (Change Portal Credentials) has **Current
+Password**, new password and confirm new password fields, plus username and confirm
+username. A submission without the current password is rejected whatever else is
+filled in, so fill Current Password with the account's existing password whenever a
+step submits this form.
 
 ## Shared data — do not change
 
