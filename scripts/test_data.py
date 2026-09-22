@@ -77,6 +77,13 @@ CREDENTIALS = {
     "patient_with_many_past_appointments_username": ("OPENEMR_PORTAL_USER", "Phil1", False),
     "patient_with_many_past_appointments_password": ("OPENEMR_PORTAL_PASSWORD", "phil", True),
     "patient_with_many_past_appointments_email": ("OPENEMR_PORTAL_EMAIL", "heya@invalid.email.com", False),
+    # Run 9: Phil's Patient Immunization shows "No records found." (PRD §26).
+    "patient_no_immunizations_username": ("OPENEMR_PORTAL_USER", "Phil1", False),
+    "patient_no_immunizations_password": ("OPENEMR_PORTAL_PASSWORD", "phil", True),
+    "patient_no_immunizations_email": ("OPENEMR_PORTAL_EMAIL", "heya@invalid.email.com", False),
+    # Deliberately not supplied: patient_no_non_immunization_snapshot_* (a patient with
+    # every non-immunization Health Snapshot list empty). Both demo patients have
+    # medications, so no such account exists; preflight leaves that test out.
     # The change-credentials tests sign in as patient 1 and fill the new-password
     # fields. Using patient 1's CURRENT password means an accidental save changes
     # nothing — a real change would lock every later test (and the public) out.

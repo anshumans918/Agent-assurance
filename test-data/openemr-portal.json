@@ -99,5 +99,9 @@
   "unavailable_appointment_time": {
     "value": "11:45 PM",
     "_note": "Outside clinic hours, so absent from any provider's See Availability slots."
+  },
+  "other_patient_pid": {
+    "value": "2",
+    "_note": "Susan Underwood's pid (Clinical Documents link on her dashboard: onsitedocuments?pid=2); patient 1 (Phil) is pid 1."
   }
 }
