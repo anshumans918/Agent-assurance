@@ -11,12 +11,23 @@ after an authoring pass, and always locates the suite pack by execution id.
   execution-id <ndjson>   print the sealed suite execution id (empty after authoring only)
   authored <ndjson>       print how many members this stream authored
   failed <ndjson>         print the path of every executed member that did not pass
+  prune-recordings <ndjson...>
+                          delete the recorded steps (.testmuai/tests/output-<stem>) of
+                          every member whose last result across these streams is not a
+                          pass, so the next run records it afresh instead of replaying a
+                          recording of a failed attempt
+
+Replaying beats re-recording only for members that passed: run 11 authored 53 members
+and passed 15, while run 12 replayed those recordings and passed 11 (4 more recovered
+in its retry). Keeping a failed member's recording makes the next run repeat it.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import sys
+from pathlib import Path
 
 
 def events(path: str):
@@ -40,8 +51,36 @@ def execution_id(path: str) -> str:
     return found
 
 
+def prune_recordings(streams: list[str]) -> int:
+    """Last result wins across the streams, in the order given (retry last)."""
+    result: dict[str, str] = {}
+    for stream in streams:
+        if not Path(stream).exists():
+            continue
+        for event in events(stream):
+            if event.get("type") in ("testrun_member_end", "testrun_authored_member_end"):
+                result[event["path"]] = event.get("status", "")
+
+    pruned = 0
+    for path, status in sorted(result.items()):
+        if status == "passed":
+            continue
+        recording = Path(".testmuai/tests") / f"output-{Path(path).name[: -len('_test.md')]}"
+        if recording.is_dir():
+            shutil.rmtree(recording, ignore_errors=True)
+            pruned += 1
+    kept = sum(1 for s in result.values() if s == "passed")
+    print(f"Kept the recordings of {kept} passing member(s); dropped {pruned} so they are recorded afresh.")
+    return 0
+
+
 def main() -> int:
-    if len(sys.argv) != 3 or sys.argv[1] not in ("execution-id", "authored", "failed"):
+    if len(sys.argv) < 3 or sys.argv[1] not in ("execution-id", "authored", "failed", "prune-recordings"):
+        print(__doc__)
+        return 2
+    if sys.argv[1] == "prune-recordings":
+        return prune_recordings(sys.argv[2:])
+    if len(sys.argv) != 3:
         print(__doc__)
         return 2
     command, path = sys.argv[1], sys.argv[2]

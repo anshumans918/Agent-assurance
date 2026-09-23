@@ -385,6 +385,13 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Only a passing member's recording is worth replaying: run 11 recorded 53 members
+      # and passed 15, then run 12 replayed them and passed 11. A failed recording makes
+      # the next run repeat the same failure, so drop those and let it record afresh.
+      - name: Drop the recordings of failed members
+        if: always() && steps.execute.outcome != 'skipped'
+        run: python3 scripts/testrun_stream.py prune-recordings testrun.ndjson testrun-retry.ndjson
+
       - name: Save recorded steps
         if: always() && steps.execute.outcome != 'skipped'
         uses: actions/cache/save@v5
@@ -428,6 +435,7 @@ jobs:
           # from exactly steps.pack.outputs.path.
           path: |
             ${{ steps.pack.outputs.path }}
+            ${{ steps.pack1.outputs.path }}
             evidence-validation.json
             testrun.ndjson
             testrun-authoring.ndjson
