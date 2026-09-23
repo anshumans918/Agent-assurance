@@ -64,7 +64,9 @@ records.
 | `.github/actions/setup-kane/action.yml` | Installs kane-cli, signs in without a browser, and points it at the runner's Chrome. |
 | `scripts/assurance.sh` | Runs ingest → extract → review → design, and treats exit code 3 as a pause, not a failure. |
 | `scripts/coverage_gate.py` | Turns the coverage ribbon into a job summary and a pass/fail gate. |
-| `scripts/test_data.py`, `test-data/openemr-portal.json` | Supply the tests' `{{variables}}`, including portal credentials from secrets. They refuse to run a suite that is missing any variable. |
+| `scripts/test_data.py`, `test-data/openemr-portal.json` | Supply the tests' `{{variables}}`, including the portal logins. Preflight leaves out any test whose variables are unsupplied. |
+| `scripts/testrun_stream.py`, `scripts/reset_window.py` | Read a testrun stream (suite pack, failures to retry, recordings to keep) and keep executions clear of the demo's daily reset. |
+| `.testmuai/context.md` | Standing instructions kane-cli gives the agent on every run: sign-in rules, the pages to use when a dashboard tile does not open, and what must not be changed on the shared demo. |
 
 ## Setup
 
@@ -109,7 +111,9 @@ before design**. kane-cli 0.8.12+ reuses a variable name that already exists in 
 and does not invent a new one. As a result, the designed tests use `patient1_username`
 and similar names instead of names nothing supplies. For any name design does invent,
 `scripts/test_data.py stubs` emits a warning. The evidence job's preflight
-(`test_data.py check`) then stops on it before a browser starts.
+(`test_data.py check --runnable-out`) then leaves out only the tests that use an
+unsupplied name — the rest of the suite still runs, and those criteria show up as not
+run in the coverage ribbon.
 
 The names in `test-data/openemr-portal.json` are a first guess. As the reference repo did
 after its first run, reconcile them against the first real `design tests` output.
